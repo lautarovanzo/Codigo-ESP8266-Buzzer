@@ -1,3 +1,4 @@
+// Se incluyen las bibliotecas necesarias
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <UniversalTelegramBot.h>
@@ -30,6 +31,7 @@ PubSubClient mqttClient(client);
 
 bool photoTaken = false;
 
+// Se inicializa la comunicacion serial y se configura el pin del pulsador
 void setup() {
   Serial.begin(115200);
   pinMode(4, INPUT_PULLUP); // Pin del pulsador
@@ -59,13 +61,14 @@ void setup() {
   config.jpeg_quality = 10;
   config.fb_count = 2;
 
+  // Se inicializa la camara y se verifica si la inicializacion fue exitosa
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("Error al inicializar la cámara. Código de error: 0x%x", err);
     return;
   }
 
-  // Conexión a Wi-Fi
+  // Se realiza la conexión a Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
@@ -76,26 +79,29 @@ void setup() {
   Serial.print("Dirección IP asignada: ");
   Serial.println(WiFi.localIP());
 
-  // Conexión al broker MQTT
+  // Se establece la conexion con el servidor MQTT
   mqttClient.setServer(mqtt_server, 1883);
   mqttClient.setCallback(callback);
   if (mqttClient.connect("ESP32CAM", mqtt_username, mqtt_password)) {
-    mqttClient.subscribe(mqtt_topic);
+    mqttClient.subscribe(mqtt_topic);  // Se suscribe al topico "timbre"
   } else {
     Serial.println("Error al conectar al broker MQTT.");
   }
 }
 
+// Se verifica si se ha presionado el pulsador
 void loop() {
   if (digitalRead(4) == LOW && !photoTaken) {
-    takePhoto();
+    takePhoto();  // Se toma una foto de quien presiona el pulsador
   }
 
+  // Se verifica la conexion con el servidor MQTT
   if (mqttClient.connected()) {
     mqttClient.loop();
   }
 }
 
+// Captura una imagen utilizando la camara y la guarda
 void takePhoto() {
   camera_fb_t* fb = NULL;
   fb = esp_camera_fb_get();
@@ -124,6 +130,7 @@ void takePhoto() {
   esp_camera_fb_return(fb);
 }
 
+// Se envia un mensaje y la foto capturada al chat de Telegram utilizando el bot.
 void sendTelegramMessage() {
   bot.sendMessage(CHAT_ID, "¡Hay alguien en la puerta!");
   bot.sendPhoto(CHAT_ID, SPIFFS, "/photo.jpg");

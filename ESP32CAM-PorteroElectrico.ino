@@ -1,118 +1,130 @@
 #include <WiFi.h>
+#include <WiFiClient.h>
+#include <UniversalTelegramBot.h>
 #include <WiFiClientSecure.h>
 #include "esp_camera.h"
-#include <ArduinoJson.h>
-#include <UniversalTelegramBot.h>
-
-// Parámetros de la red Wi-Fi
-const char* ssid = "TuSSID";
-const char* password = "TuContraseña";
-
-// Configuración de Telegram Bot
-#define BOT_TOKEN "TuToken"
-#define CHAT_ID "TuChatID"
-
-// Inicialización del cliente Wi-Fi
-WiFiClientSecure client;
-
-// Inicialización del cliente Telegram Bot
-UniversalTelegramBot bot(BOT_TOKEN, client);
+#include <PubSubClient.h>
 
 // Configuración de la cámara
-camera_fb_t *fb = NULL;
-bool cameraInitialized = false;
+#define CAMERA_MODEL_AI_THINKER
+#include "camera_pins.h"
 
-// Función para capturar y enviar la imagen
-void captureAndSendImage() {
-  if (!cameraInitialized) {
-    cameraInitialized = true;
-    camera_config_t config;
-    config.ledc_channel = LEDC_CHANNEL_0;
-    config.ledc_timer = LEDC_TIMER_0;
-    config.pin_d0 = 5;
-    config.pin_d1 = 18;
-    config.pin_d2 = 19;
-    config.pin_d3 = 21;
-    config.pin_d4 = 36;
-    config.pin_d5 = 39;
-    config.pin_d6 = 34;
-    config.pin_d7 = 35;
-    config.pin_xclk = 0;
-    config.pin_pclk = 22;
-    config.pin_vsync = 25;
-    config.pin_href = 23;
-    config.pin_sscb_sda = 26;
-    config.pin_sscb_scl = 27;
-    config.pin_pwdn = 32;
-    config.pin_reset = -1;
-    config.xclk_freq_hz = 20000000;
-    config.pixel_format = PIXFORMAT_JPEG;
+// Configuración de Wi-Fi
+const char* ssid = "nombre_red_wifi";
+const char* password = "contraseña_wifi";
 
-    if (psramFound()) {
-      config.frame_size = FRAMESIZE_UXGA;
-      config.jpeg_quality = 10;
-      config.fb_count = 2;
-    } else {
-      config.frame_size = FRAMESIZE_SVGA;
-      config.jpeg_quality = 12;
-      config.fb_count = 1;
-    }
+// Configuración del bot de Telegram
+#define BOT_TOKEN "token_del_bot"
+#define CHAT_ID "ID_del_chat"
 
-    esp_err_t err = esp_camera_init(&config);
-    if (err != ESP_OK) {
-      Serial.println("Error al inicializar la cámara");
-      return;
-    }
-  }
+// Configuración del servidor MQTT
+const char* mqtt_server = "dirección_ip_broker";
+const char* mqtt_username = "usuario_broker";
+const char* mqtt_password = "contraseña_broker";
+const char* mqtt_topic = "timbre";
 
-  // Capturar imagen
-  fb = esp_camera_fb_get();
-  if (!fb) {
-    Serial.println("Error al capturar la imagen");
-    return;
-  }
+WiFiClient wifiClient;
+UniversalTelegramBot bot(BOT_TOKEN, wifiClient);
+WiFiClientSecure client;
+PubSubClient mqttClient(client);
 
-  // Enviar imagen por Telegram
-  if (client.connect("api.telegram.org", 443)) {
-    String randomName = "/captura" + String(millis()) + ".jpg";
-    String request = "POST /bot" + String(BOT_TOKEN) + "/sendPhoto?chat_id=" + String(CHAT_ID) + " HTTP/1.1\r\n" +
-                     "Host: api.telegram.org\r\n" +
-                     "Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW\r\n" +
-                     "Content-Length: " + String(fb->len) + "\r\n" +
-                     "Connection: close\r\n\r\n";
-    client.println(request);
-
-    client.write((uint8_t*)fb->buf, fb->len);
-
-    esp_camera_fb_return(fb);
-    fb = NULL;
-
-    Serial.println("Imagen enviada correctamente");
-  } else {
-    Serial.println("Error al conectar con Telegram");
-  }
-  client.stop();
-}
+bool photoTaken = false;
 
 void setup() {
   Serial.begin(115200);
+  pinMode(4, INPUT_PULLUP); // Pin del pulsador
 
-  // Conectar a la red Wi-Fi
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size = FRAMESIZE_VGA;
+  config.jpeg_quality = 10;
+  config.fb_count = 2;
+
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Error al inicializar la cámara. Código de error: 0x%x", err);
+    return;
+  }
+
+  // Conexión a Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
-    Serial.println("Conectando a la red Wi-Fi...");
+    Serial.println("Conectando a Wi-Fi...");
   }
 
-  Serial.println("Conexión Wi-Fi establecida");
+  Serial.println("Conexión establecida.");
+  Serial.print("Dirección IP asignada: ");
+  Serial.println(WiFi.localIP());
+
+  // Conexión al broker MQTT
+  mqttClient.setServer(mqtt_server, 1883);
+  mqttClient.setCallback(callback);
+  if (mqttClient.connect("ESP32CAM", mqtt_username, mqtt_password)) {
+    mqttClient.subscribe(mqtt_topic);
+  } else {
+    Serial.println("Error al conectar al broker MQTT.");
+  }
 }
 
 void loop() {
-  // Esperar a que se presione el botón para capturar y enviar la imagen
-  if (digitalRead(13) == HIGH) {
-    captureAndSendImage();
-    delay(5000);  // Retraso para evitar envío múltiple por un solo toque
+  if (digitalRead(4) == LOW && !photoTaken) {
+    takePhoto();
   }
 
-  delay(100);
+  if (mqttClient.connected()) {
+    mqttClient.loop();
+  }
+}
+
+void takePhoto() {
+  camera_fb_t* fb = NULL;
+  fb = esp_camera_fb_get();
+
+  if (!fb) {
+    Serial.println("Error al capturar la imagen.");
+    return;
+  }
+
+  String photoName = "/photo.jpg";
+
+  fs::FS &fs = SPIFFS;
+  Serial.printf("Guardando foto en: %s\n", photoName.c_str());
+
+  File photoFile = fs.open(photoName.c_str(), FILE_WRITE);
+  if (!photoFile) {
+    Serial.println("Error al abrir el archivo.");
+  } else {
+    photoFile.write(fb->buf, fb->len);
+    Serial.println("Foto guardada.");
+    photoFile.close();
+    photoTaken = true;
+    sendTelegramMessage();
+  }
+
+  esp_camera_fb_return(fb);
+}
+
+void sendTelegramMessage() {
+  bot.sendMessage(CHAT_ID, "¡Hay alguien en la puerta!");
+  bot.sendPhoto(CHAT_ID, SPIFFS, "/photo.jpg");
 }

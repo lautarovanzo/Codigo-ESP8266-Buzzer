@@ -1,73 +1,67 @@
 #include <ESP8266WiFi.h>
-#include <Adafruit_MQTT.h>
-#include <Adafruit_MQTT_Client.h>
+#include <PubSubClient.h>
 
-// Parámetros de la red Wi-Fi
-const char* ssid = "TuSSID";
-const char* password = "TuContraseña";
+// Configuración de Wi-Fi
+const char* ssid = "nombre_red_wifi";
+const char* password = "contraseña_wifi";
 
-// Configuración del cliente MQTT
-const char* mqttServer = "mqtt.example.com";
-const int mqttPort = 1883;
-const char* mqttUser = "TuUsuario";
-const char* mqttPassword = "TuContraseña";
+// Configuración del servidor MQTT
+const char* mqtt_server = "dirección_ip_broker";
+const char* mqtt_username = "usuario_broker";
+const char* mqtt_password = "contraseña_broker";
+const char* mqtt_topic = "timbre";
 
-// Configuración del buzzer
-const int buzzerPin = D1;
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 
-// Inicialización del cliente Wi-Fi
-WiFiClient client;
-
-// Inicialización del cliente MQTT
-Adafruit_MQTT_Client mqtt(&client, mqttServer, mqttPort, mqttUser, mqttPassword);
-
-// Canal MQTT para recibir mensajes
-Adafruit_MQTT_Subscribe alarmChannel = Adafruit_MQTT_Subscribe(&mqtt, "home/alarm");
+const int buzzerPin = D1; // Pin del buzzer
 
 void setup() {
   Serial.begin(115200);
 
-  // Conectar a la red Wi-Fi
+  pinMode(buzzerPin, OUTPUT);
+
+  // Conexión a Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
-    Serial.println("Conectando a la red Wi-Fi...");
+    Serial.println("Conectando a Wi-Fi...");
   }
 
-  Serial.println("Conexión Wi-Fi establecida");
+  Serial.println("Conexión establecida.");
+  Serial.print("Dirección IP asignada: ");
+  Serial.println(WiFi.localIP());
 
-  // Configurar MQTT
-  mqtt.subscribe(&alarmChannel);
+  // Conexión al broker MQTT
+  mqttClient.setServer(mqtt_server, 1883);
+  mqttClient.setCallback(callback);
+  if (mqttClient.connect("ESP8266", mqtt_username, mqtt_password)) {
+    mqttClient.subscribe(mqtt_topic);
+  } else {
+    Serial.println("Error al conectar al broker MQTT.");
+  }
 }
 
 void loop() {
-  // Reconectar si se pierde la conexión MQTT
-  if (!mqtt.connected()) {
-    Serial.println("Conexión MQTT perdida. Intentando reconexión...");
-    reconnectMQTT();
-  }
-
-  // Manejar mensajes MQTT
-  Adafruit_MQTT_Subscribe *subscription;
-  while ((subscription = mqtt.readSubscription(1000))) {
-    if (subscription == &alarmChannel) {
-      // Activar el buzzer
-      digitalWrite(buzzerPin, HIGH);
-      delay(500);
-      digitalWrite(buzzerPin, LOW);
-    }
+  if (mqttClient.connected()) {
+    mqttClient.loop();
   }
 }
 
-void reconnectMQTT() {
-  while (!mqtt.connected()) {
-    if (mqtt.connect()) {
-      Serial.println("Conexión MQTT exitosa");
-      mqtt.subscribe(&alarmChannel);
-    } else {
-      Serial.print("Error al conectar con el servidor MQTT. Estado: ");
-      Serial.println(mqtt.connectError());
-      delay(5000);
-    }
-  }
+void callback(char* topic, byte* payload, unsigned int length) {
+  // Realizar una acción cuando se reciba un mensaje MQTT
+  String message = "";
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+
+  if (message == "ring") {
+    activateBuzzer();
+  }
+}
+
+void activateBuzzer() {
+  digitalWrite(buzzerPin, HIGH); // Activar el buzzer
+  delay(1000); // Mantener el buzzer activo durante 1 segundo
+  digitalWrite(buzzerPin, LOW); // Desactivar el buzzer
 }
